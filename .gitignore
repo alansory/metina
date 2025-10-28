@@ -1,0 +1,45 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json.* # keep main lockfile tracked
+.pnpm-store/
+
+# Next.js
+.next/
+.next/static/
+out/
+.vercel/
+.vercel/cache/
+
+# Builds / tooling
+dist/
+build/
+coverage/
+.cache/
+.parcel-cache/
+.turbo/
+.swc/
+
+# Env & secrets
+.env
+.env.*.local
+.env.local
+*.env
+*.secret
+*.key
+
+# Editors / OS
+.DS_Store
+*.swp
+*.swo
+*.orig
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Misc
+*.log
+*.tgz
