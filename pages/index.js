@@ -288,12 +288,13 @@ const Scan = () => {
   const pageDescription =
     "Monitor Meteora DLMM and DAMM V2 liquidity pools in real time. Compare TVL, fees, and volume across Solana markets with smart filters and auto-refresh.";
   const pageUrl = "https://metina.id/";
-  const previewImage = `${pageUrl}img/logo.svg`;
+  const previewImage = `${pageUrl}img/logo-gram.svg`;
 
   return (
     <>
       <Head>
         <title>{pageTitle}</title>
+        <link rel="icon" href="/img/logo-gram.svg" type="image/svg+xml" />
         <meta name="title" content={pageTitle} />
         <meta name="description" content={pageDescription} />
         <meta
