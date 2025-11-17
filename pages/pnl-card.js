@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Head from 'next/head';
 import Header from '../components/Header';
 import html2canvas from 'html2canvas';
@@ -17,7 +17,63 @@ const PnlCard = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [pnlData, setPnlData] = useState(null);
   const [error, setError] = useState(null);
+  const [customBackgroundDataUrl, setCustomBackgroundDataUrl] = useState('');
+  const [backgroundError, setBackgroundError] = useState(null);
   const cardRef = useRef(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const cachedUpload = window.localStorage.getItem('metina-pnl-bg-upload');
+
+    if (cachedUpload) {
+      setCustomBackgroundDataUrl(cachedUpload);
+    }
+  }, []);
+
+  const handleBackgroundUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setBackgroundError('Please select a valid image file.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setBackgroundError('Image size must be 5MB or less.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = reader.result;
+
+      if (typeof result === 'string') {
+        setCustomBackgroundDataUrl(result);
+        setBackgroundError(null);
+
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('metina-pnl-bg-upload', result);
+        }
+      }
+    };
+
+    reader.onerror = () => {
+      setBackgroundError('Failed to read image file.');
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  const clearCustomBackground = () => {
+    setCustomBackgroundDataUrl('');
+    setBackgroundError(null);
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem('metina-pnl-bg-upload');
+    }
+  };
 
   const formatDuration = (seconds) => {
     const hrs = Math.floor(seconds / 3600).toString().padStart(2, '0');
@@ -464,6 +520,35 @@ const PnlCard = () => {
             </button>
           </div>
 
+          {/* Custom Background Field */}
+          <div className="flex justify-center mb-4 space-y-2">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Upload background image (cached in browser, max 5MB)
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleBackgroundUpload}
+                className="block w-full text-xs text-gray-400 file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-medium file:bg-orange-500/10 file:text-orange-400 hover:file:bg-orange-500/20"
+              />
+            </div>
+
+            {customBackgroundDataUrl && (
+              <button
+                type="button"
+                onClick={clearCustomBackground}
+                className="text-xs text-orange-400 hover:text-orange-300 underline underline-offset-2"
+              >
+                Clear custom background
+              </button>
+            )}
+
+            {backgroundError && (
+              <p className="text-xs text-red-400">{backgroundError}</p>
+            )}
+          </div>
+
           {/* Error Message */}
           {error && (
             <div className="mb-3 p-3 bg-red-900/20 border border-red-500 rounded-md text-red-400 text-xs">
@@ -506,7 +591,10 @@ const PnlCard = () => {
               <div className="overflow-x-auto">
                 <div className="relative w-[720px] md:w-full" data-pnl-card>
                   <img
-                    src={isProfit(pnlData) ? "/img/win-v4.png" : "/img/loss-v4.png"}
+                    src={
+                      customBackgroundDataUrl ||
+                      (isProfit(pnlData) ? '/img/win-v4.png' : '/img/loss-v4.png')
+                    }
                     alt="PNL Card"
                     className="w-full h-auto rounded-md"
                   />
@@ -545,10 +633,10 @@ const PnlCard = () => {
                     </div>
 
                     {/* Bottom Left - Links */}
-                    <div className="absolute bottom-20 left-6">
-                      <div className="text-white text-xs flex items-center gap-2 mb-1">
+                    {/* <div className="absolute bottom-20 left-6 space-y-1 text-white text-xs leading-tight">
+                      <div className="flex items-center gap-2">
                         <svg
-                          className="w-3 h-3 font-bold"
+                          className="w-4 h-4 text-white shrink-0"
                           fill="currentColor"
                           viewBox="0 0 24 24"
                           aria-hidden="true"
@@ -557,9 +645,9 @@ const PnlCard = () => {
                         </svg>
                         <span>X.COM/METINAID</span>
                       </div>
-                      <div className="text-white text-xs flex items-center gap-2">
+                      <div className="flex items-center gap-2">
                         <svg
-                          className="w-3 h-3 font-bold"
+                          className="w-4 h-4 text-white shrink-0"
                           fill="none"
                           stroke="currentColor"
                           strokeWidth="2"
@@ -573,7 +661,19 @@ const PnlCard = () => {
                         </svg>
                         <span>WWW.METINA.ID</span>
                       </div>
+                    </div> */}
+
+                    {/* Top Right - Links */}
+                    <div className="absolute top-6 right-6 space-y-1 text-white text-xs leading-tight text-right">
+                      <div className="flex items-center gap-2 justify-end">
+                        <span>X.COM/METINAID</span>
+                      </div>
+
+                      <div className="flex items-center gap-2 justify-end">
+                        <span>WWW.METINA.ID</span>
+                      </div>
                     </div>
+
 
                     {/* Bottom Row - TVL, BIN STEP, BASE FEE, PNL (sejajar horizontal) */}
                     <div className="absolute bottom-2 left-6 right-6">
@@ -604,8 +704,13 @@ const PnlCard = () => {
                           </div>
                         </div>
                       </div>
+                      {/* <div className="flex justify-center">
+                        <div className="text-gray-400 text-xs mb-0.5">DEV YANMAN & DESIGN NAOJ</div>
+                      </div> */}
                       <div className="flex justify-center">
-                        <div className="text-gray-400 text-xs mb-0.5">DESIGN NAOJ</div>
+                        <div className="text-gray-400 text-xs mb-0.5">
+                        {customBackgroundDataUrl ? 'DEV YANMAN' : 'DEV YANMAN & DESIGN NAOJ'}
+                        </div>
                       </div>
                     </div>
                   </div>
