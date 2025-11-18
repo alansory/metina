@@ -11,6 +11,8 @@ const METEORA_API_BASE = 'https://dlmm-api.meteora.ag';
 const JUPITER_TOKEN_SEARCH = 'https://lite-api.jup.ag/tokens/v2/search?query=';
 const DLMM_PROGRAM_ID = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo';
 const LAMPORTS_PER_SOL = 1_000_000_000;
+const DEFAULT_EXCHANGE_RATES = { USD: 1, IDR: 16_700 };
+const CURRENCY_OPTIONS = ['USD', 'IDR'];
 
 const PnlCard = () => {
   const [transactionInput, setTransactionInput] = useState('');
@@ -19,6 +21,8 @@ const PnlCard = () => {
   const [error, setError] = useState(null);
   const [customBackgroundDataUrl, setCustomBackgroundDataUrl] = useState('');
   const [backgroundError, setBackgroundError] = useState(null);
+  const [currency, setCurrency] = useState('USD');
+  const [exchangeRates, setExchangeRates] = useState(DEFAULT_EXCHANGE_RATES);
   const cardRef = useRef(null);
 
   useEffect(() => {
@@ -29,6 +33,34 @@ const PnlCard = () => {
     if (cachedUpload) {
       setCustomBackgroundDataUrl(cachedUpload);
     }
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchRates = async () => {
+      try {
+        const response = await fetchJson('https://open.er-api.com/v6/latest/USD', {
+          defaultValue: null,
+        });
+
+        const idrRate = response?.rates?.IDR;
+        if (isMounted && idrRate) {
+          setExchangeRates((prev) => ({
+            ...prev,
+            IDR: idrRate,
+          }));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch currency rates:', err?.message);
+      }
+    };
+
+    fetchRates();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleBackgroundUpload = (event) => {
@@ -90,16 +122,118 @@ const PnlCard = () => {
     return formatDuration(durationSeconds);
   };
 
-  const formatCurrency = (value) => {
+// const formatCurrency = (
+//   value,
+//   { currency = 'USD', exchangeRates = DEFAULT_EXCHANGE_RATES } = {}
+// ) => {
+//   const fallbackSymbol = currency === 'IDR' ? 'Rp' : '$';
+
+//   if (value === null || value === undefined || value === '') {
+//     return `${fallbackSymbol}0`;
+//   }
+
+//   const numericValue = Number(String(value).replace(/[^0-9.-]/g, ''));
+//   if (Number.isNaN(numericValue)) {
+//     return `${fallbackSymbol}0`;
+//   }
+
+//   const rate = exchangeRates[currency] ?? 1;
+//   const convertedValue =
+//     currency === 'USD' ? numericValue : numericValue * rate;
+//   const locale = currency === 'USD' ? 'en-US' : 'id-ID';
+
+//   const formatted = new Intl.NumberFormat(locale, {
+//     style: 'currency',
+//     currency,
+//     maximumFractionDigits: 0,
+//     minimumFractionDigits: 0,
+//   }).format(convertedValue);
+
+//   if (currency === 'IDR') {
+//     return formatted.replace(/\s+(?=\d)/g, '');
+//   }
+
+//   return formatted;
+// };
+
+  // const formatCurrency = (
+  //   value,
+  //   { currency = 'USD', exchangeRates = DEFAULT_EXCHANGE_RATES } = {}
+  // ) => {
+  //   const fallbackSymbol = currency === 'IDR' ? 'Rp' : '$';
+
+  //   if (value === null || value === undefined || value === '') {
+  //     return `${fallbackSymbol}0`;
+  //   }
+
+  //   const numericValue = Number(String(value).replace(/[^0-9.-]/g, ''));
+  //   if (Number.isNaN(numericValue)) {
+  //     return `${fallbackSymbol}0`;
+  //   }
+
+  //   const rate = exchangeRates[currency] ?? 1;
+  //   const convertedValue = currency === 'USD' ? numericValue : numericValue * rate;
+  //   const locale = currency === 'USD' ? 'en-US' : 'id-ID';
+
+  //   // Format tanpa spasi dan pastikan tanda minus nempel
+  //   const formatted = new Intl.NumberFormat(locale, {
+  //     style: 'currency',
+  //     currency,
+  //     maximumFractionDigits: 0,
+  //     minimumFractionDigits: 0,
+  //   }).format(Math.abs(convertedValue));
+
+  //   // Hapus spasi yang biasanya ada di antara tanda minus dan angka
+  //   const cleanFormatted = formatted.replace(/\s/g, '');
+
+  //   // Kembalikan tanda minus jika nilai negatif
+  //   return convertedValue < 0 ? `-${cleanFormatted}` : cleanFormatted;
+  // };
+
+  const formatCurrency = (
+    value,                                      // nilai dalam USD (contoh: 73.5)
+    { currency = 'USD', exchangeRates = DEFAULT_EXCHANGE_RATES } = {}
+  ) => {
     if (value === null || value === undefined || value === '') return '$0';
-
-    const numericValue = Number(String(value).replace(/[^0-9.-]/g, ''));
-    if (Number.isNaN(numericValue)) return '$0';
-
-    const roundedValue = numericValue >= 0 ? Math.ceil(numericValue) : Math.floor(numericValue);
-    const absoluteValue = Math.abs(roundedValue);
-
-    return roundedValue < 0 ? `-$${absoluteValue}` : `$${absoluteValue}`;
+  
+    let numericValue = parseFloat(value);
+    if (isNaN(numericValue)) return '$0';
+  
+    // Kalau USD → langsung format biasa
+    if (currency === 'USD') {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 0,
+        minimumFractionDigits: 0,
+      }).format(numericValue);
+    }
+  
+    // === KHUSUS IDR: konversi dulu ke IDR lalu singkat ===
+    const rate = exchangeRates.IDR || 16700;
+    const valueInIdr = numericValue * rate;        // <—— INI YANG SEBELUMNYA LUPA!
+    const abs = Math.abs(valueInIdr);
+  
+    let formatted;
+    let suffix = '';
+  
+    if (abs >= 1_000_000_000) {           // ≥ 1 miliar
+      formatted = (abs / 1_000_000_000).toFixed(1).replace('.0', '');
+      suffix = 'M';
+    } else if (abs >= 1_000_000) {        // ≥ 1 juta
+      formatted = (abs / 1_000_000).toFixed(1).replace('.0', '');
+      suffix = 'JT';
+    } else if (abs >= 1_000) {            // ≥ 1 ribu (opsional)
+      formatted = Math.round(abs / 1_000);
+      suffix = 'K';
+    } else {
+      formatted = Math.round(abs).toString();
+    }
+  
+    // Pakai titik sebagai pemisah ribuan biar lebih rapi (opsional)
+    const result = `Rp${Number(formatted).toLocaleString('id-ID')}${suffix}`;
+  
+    return valueInIdr < 0 ? `-${result}` : result;
   };
 
   const isProfit = (pnlData) => {
@@ -187,35 +321,75 @@ const PnlCard = () => {
     });
   };
 
-  const extractPositionAddress = (heliusTx) => {
-    const instructions = heliusTx?.transaction?.message?.instructions || [];
-    for (let idx = instructions.length - 1; idx >= 0; idx -= 1) {
-      const instruction = instructions[idx];
-      if (
-        instruction?.programId === DLMM_PROGRAM_ID &&
-        Array.isArray(instruction.accounts) &&
-        instruction.accounts.length > 0
-      ) {
-        return instruction.accounts[0];
+  // const extractPositionAddress = (heliusTx) => {
+  //   const instructions = heliusTx?.transaction?.message?.instructions || [];
+  //   for (let idx = instructions.length - 1; idx >= 0; idx -= 1) {
+  //     const instruction = instructions[idx];
+  //     if (
+  //       instruction?.programId === DLMM_PROGRAM_ID &&
+  //       Array.isArray(instruction.accounts) &&
+  //       instruction.accounts.length > 0
+  //     ) {
+  //       return instruction.accounts[0];
+  //     }
+  //   }
+
+  //   const innerInstructions = heliusTx?.meta?.innerInstructions || [];
+  //   for (const inner of innerInstructions) {
+  //     for (const instruction of inner.instructions || []) {
+  //       if (
+  //         instruction?.programId === DLMM_PROGRAM_ID &&
+  //         Array.isArray(instruction.accounts) &&
+  //         instruction.accounts.length > 0
+  //       ) {
+  //         return instruction.accounts[0];
+  //       }
+  //     }
+  //   }
+
+  //   return null;
+  // };
+
+  const extractPositionAddress = async (heliusTx) => {
+    const candidates = new Set();
+  
+    // 1. Outer instructions
+    const outer = heliusTx?.transaction?.message?.instructions || [];
+    for (const ix of outer) {
+      if (ix?.programId === DLMM_PROGRAM_ID && Array.isArray(ix.accounts)) {
+        ix.accounts.forEach(acc => acc && candidates.add(acc));
       }
     }
-
-    const innerInstructions = heliusTx?.meta?.innerInstructions || [];
-    for (const inner of innerInstructions) {
-      for (const instruction of inner.instructions || []) {
-        if (
-          instruction?.programId === DLMM_PROGRAM_ID &&
-          Array.isArray(instruction.accounts) &&
-          instruction.accounts.length > 0
-        ) {
-          return instruction.accounts[0];
+  
+    // 2. Inner instructions
+    const innerAll = heliusTx?.meta?.innerInstructions || [];
+    for (const group of innerAll) {
+      for (const ix of group.instructions || []) {
+        if (ix?.programId === DLMM_PROGRAM_ID && Array.isArray(ix.accounts)) {
+          ix.accounts.forEach(acc => acc && candidates.add(acc));
         }
       }
     }
-
+  
+    if (candidates.size === 0) return null;
+  
+    // 3. Coba satu per satu sampai ketemu yangua 200 OK
+    for (const addr of candidates) {
+      try {
+        const res = await fetch(`${METEORA_API_BASE}/position/${addr}`, {
+          method: 'HEAD', // lebih cepat, cuma cek status
+        });
+        if (res.ok) {
+          return addr;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  
     return null;
   };
-
+  
   const sumUsd = (items = []) =>
     items.reduce(
       (total, item) =>
@@ -302,7 +476,7 @@ const PnlCard = () => {
     const pairName = pairInfo?.name || 'DLMM';
 
     // TVL shown on card should reflect the user's total capital deposited
-    const tvl = totalDepositUsd.toFixed(2);
+    const tvl = Number(totalDepositUsd.toFixed(2));
 
     const openTimeISO = openTimestamp ? new Date(openTimestamp * 1000).toISOString() : null;
     const closeTimeISO = closeTimestamp ? new Date(closeTimestamp * 1000).toISOString() : null;
@@ -329,7 +503,7 @@ const PnlCard = () => {
       baseFee: pairInfo?.base_fee_percentage
         ? `${pairInfo.base_fee_percentage}%`
         : null,
-      tvl: Number(tvl).toLocaleString(undefined, { maximumFractionDigits: 0 }),
+      tvl,
       owner: position?.owner,
       pairAddress: position?.pair_address,
       totalDepositUsd: totalDepositUsd.toFixed(2),
@@ -349,6 +523,45 @@ const PnlCard = () => {
     };
   };
 
+  const waitForFonts = async () => {
+    if (typeof document === 'undefined' || !document.fonts?.ready) return;
+    try {
+      await document.fonts.ready;
+    } catch (err) {
+      console.warn('Failed to wait for fonts:', err?.message);
+    }
+  };
+
+  const captureCardCanvas = async (cardElement) => {
+    if (!cardElement) return null;
+
+    await waitForFonts();
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    );
+
+    const restoreDimensions = lockElementDimensions(cardElement);
+
+    const { width, height } = cardElement.getBoundingClientRect();
+
+    try {
+      const canvas = await html2canvas(cardElement, {
+        backgroundColor: null,
+        scale: 2,
+        useCORS: true,
+        width,
+        height,
+        windowWidth: width,
+        windowHeight: height,
+        scrollX: 0,
+        scrollY: 0,
+      });
+      return canvas;
+    } finally {
+      restoreDimensions();
+    }
+  };
+
   const handleCopyImage = async () => {
     try {
       if (!cardRef.current) return;
@@ -356,12 +569,8 @@ const PnlCard = () => {
       const cardElement = cardRef.current.querySelector('[data-pnl-card]');
       if (!cardElement) return;
 
-      // Use html2canvas to capture the entire card with overlay text
-      const canvas = await html2canvas(cardElement, {
-        backgroundColor: null,
-        scale: 2,
-        useCORS: true,
-      });
+      const canvas = await captureCardCanvas(cardElement);
+      if (!canvas) return;
 
       canvas.toBlob(async (blob) => {
         try {
@@ -384,12 +593,8 @@ const PnlCard = () => {
       const cardElement = cardRef.current.querySelector('[data-pnl-card]');
       if (!cardElement) return;
 
-      // Use html2canvas to capture the entire card with overlay text
-      const canvas = await html2canvas(cardElement, {
-        backgroundColor: null,
-        scale: 2,
-        useCORS: true,
-      });
+      const canvas = await captureCardCanvas(cardElement);
+      if (!canvas) return;
 
       canvas.toBlob((blob) => {
         const url = URL.createObjectURL(blob);
@@ -407,31 +612,121 @@ const PnlCard = () => {
     }
   };
 
+  const lockElementDimensions = (element) => {
+    if (!element) return () => {};
+
+    const computedStyle = window.getComputedStyle(element);
+    const original = {
+      width: element.style.width,
+      height: element.style.height,
+      maxWidth: element.style.maxWidth,
+      maxHeight: element.style.maxHeight,
+    };
+
+    element.style.width = computedStyle.width;
+    element.style.height = computedStyle.height;
+    element.style.maxWidth = computedStyle.width;
+    element.style.maxHeight = computedStyle.height;
+
+    return () => {
+      element.style.width = original.width;
+      element.style.height = original.height;
+      element.style.maxWidth = original.maxWidth;
+      element.style.maxHeight = original.maxHeight;
+    };
+  };
+
+  // const handleGeneratePnl = async () => {
+  //   if (!transactionInput.trim()) {
+  //     setError('Please enter a transaction ID or link');
+  //     return;
+  //   }
+
+  //   setIsGenerating(true);
+  //   setError(null);
+  //   setPnlData(null);
+
+  //   try {
+  //     const txId = extractTxId(transactionInput);
+
+  //     const heliusResponse = await fetchHeliusTransaction(txId);
+  //     const heliusTx = heliusResponse?.result;
+
+  //     if (!heliusTx) {
+  //       throw new Error('Transaction not found on Helius');
+  //     }
+
+  //     const positionAddress = extractPositionAddress(heliusTx);
+  //     if (!positionAddress) {
+  //       throw new Error('Unable to detect DLMM position from transaction');
+  //     }
+
+  //     const positionUrl = `${METEORA_API_BASE}/position/${positionAddress}`;
+  //     const [position, deposits, claimRewards, claimFees, withdraws] = await Promise.all([
+  //       fetchJson(positionUrl),
+  //       fetchJson(`${positionUrl}/deposits`, { defaultValue: [] }),
+  //       fetchJson(`${positionUrl}/claim_rewards`, { defaultValue: [] }),
+  //       fetchJson(`${positionUrl}/claim_fees`, { defaultValue: [] }),
+  //       fetchJson(`${positionUrl}/withdraws`, { defaultValue: [] }),
+  //     ]);
+
+  //     const pairInfo = await fetchJson(
+  //       `${METEORA_API_BASE}/pair/${position?.pair_address}`,
+  //       { defaultValue: null }
+  //     );
+
+  //     const tokenSearch = position?.pair_address && pairInfo?.mint_x
+  //       ? await fetchJson(`${JUPITER_TOKEN_SEARCH}${pairInfo.mint_x}`, { defaultValue: [] })
+  //       : [];
+
+  //     const tokenInfo = Array.isArray(tokenSearch) ? tokenSearch[0] : null;
+
+  //     const payload = buildPnlPayload({
+  //       txId,
+  //       heliusTx,
+  //       position,
+  //       deposits,
+  //       withdraws,
+  //       claimRewards,
+  //       claimFees,
+  //       pairInfo,
+  //       tokenInfo,
+  //     });
+
+  //     setPnlData(payload);
+  //   } catch (err) {
+  //     setError(err.message || 'Failed to generate PNL card');
+  //   } finally {
+  //     setIsGenerating(false);
+  //   }
+  // };
+
   const handleGeneratePnl = async () => {
     if (!transactionInput.trim()) {
       setError('Please enter a transaction ID or link');
       return;
     }
-
+  
     setIsGenerating(true);
     setError(null);
     setPnlData(null);
-
+  
     try {
       const txId = extractTxId(transactionInput);
-
+  
       const heliusResponse = await fetchHeliusTransaction(txId);
       const heliusTx = heliusResponse?.result;
-
+  
       if (!heliusTx) {
         throw new Error('Transaction not found on Helius');
       }
-
-      const positionAddress = extractPositionAddress(heliusTx);
+  
+      // INI YANG HARUS DI-AWAIT!
+      const positionAddress = await extractPositionAddress(heliusTx);
       if (!positionAddress) {
-        throw new Error('Unable to detect DLMM position from transaction');
+        throw new Error('Unable to find valid DLMM position in this transaction');
       }
-
+  
       const positionUrl = `${METEORA_API_BASE}/position/${positionAddress}`;
       const [position, deposits, claimRewards, claimFees, withdraws] = await Promise.all([
         fetchJson(positionUrl),
@@ -440,18 +735,18 @@ const PnlCard = () => {
         fetchJson(`${positionUrl}/claim_fees`, { defaultValue: [] }),
         fetchJson(`${positionUrl}/withdraws`, { defaultValue: [] }),
       ]);
-
+  
       const pairInfo = await fetchJson(
         `${METEORA_API_BASE}/pair/${position?.pair_address}`,
         { defaultValue: null }
       );
-
+  
       const tokenSearch = position?.pair_address && pairInfo?.mint_x
         ? await fetchJson(`${JUPITER_TOKEN_SEARCH}${pairInfo.mint_x}`, { defaultValue: [] })
         : [];
-
+  
       const tokenInfo = Array.isArray(tokenSearch) ? tokenSearch[0] : null;
-
+  
       const payload = buildPnlPayload({
         txId,
         heliusTx,
@@ -463,9 +758,10 @@ const PnlCard = () => {
         pairInfo,
         tokenInfo,
       });
-
+  
       setPnlData(payload);
     } catch (err) {
+      console.error(err);
       setError(err.message || 'Failed to generate PNL card');
     } finally {
       setIsGenerating(false);
@@ -518,6 +814,30 @@ const PnlCard = () => {
                 <path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
               </svg>
             </button>
+          </div>
+
+          {/* Currency Selector */}
+          <div className="flex justify-center items-center gap-3 mb-4 text-xs">
+            <span className="text-gray-400 uppercase tracking-wide">Currency</span>
+            <div className="flex bg-gray-900 border border-gray-700 rounded-md overflow-hidden">
+              {CURRENCY_OPTIONS.map((option) => {
+                const isActive = currency === option;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setCurrency(option)}
+                    className={`px-3 py-1 font-semibold transition ${
+                      isActive
+                        ? 'bg-orange-500 text-black'
+                        : 'text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Custom Background Field */}
@@ -593,7 +913,7 @@ const PnlCard = () => {
                   <img
                     src={
                       customBackgroundDataUrl ||
-                      (isProfit(pnlData) ? '/img/win-v4.png' : '/img/loss-v4.png')
+                      (isProfit(pnlData) ? '/img/win-v1.png' : '/img/loss-v1.png')
                     }
                     alt="PNL Card"
                     className="w-full h-auto rounded-md"
@@ -601,28 +921,67 @@ const PnlCard = () => {
 
                   {/* Overlay Text */}
                   <div className="absolute inset-0 p-6">
-                    {/* Top Left - Time */}
-                    <div className="absolute top-6 left-6">
-                      <div className="text-gray-400 text-sm font-medium mb-1">TIME</div>
-                      <div className="text-white text-2xl font-bold font-mono tracking-wider">
-                        {pnlData.duration || '00:00:00'}
+                    {/* Left Column - Time + DLMM + Profit/Loss */}
+                    <div className="absolute top-6 left-6 flex flex-col">
+                      {/* Time block */}
+                      <div className="mb-1">
+                        <div className="text-gray-400 text-sm font-medium mb-1">TIME</div>
+                        <div className="text-white text-4xl font-bold font-mono tracking-wider leading-tight mt-[-10px]">
+                          {pnlData.duration || '00:00:00'}
+                        </div>
                       </div>
-                    </div>
+                      <div className="mb-4">
+                        <div className="text-gray-400 text-sm font-medium">DLMM</div>
+                        <div className="text-white text-4xl font-bold font-mono tracking-wider leading-tight mt-[-10px]">
+                          {pnlData.pairName.toUpperCase()}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400 text-sm font-medium">
+                          {isProfit(pnlData)
+                            ? `PROFIT (${currency})`
+                            : `LOSS (${currency})`}
+                        </div>
+                        <div
+                          className={`text-7xl font-bold leading-tight mt-[-15px] ${
+                            isProfit(pnlData) ? 'text-green-500' : 'text-red-500'
+                          }`}
+                        >
+                          {formatCurrency(
+                            pnlData.profitLossUSD || pnlData.profitLossAmount || '-271',
+                            {
+                              currency,
+                              exchangeRates,
+                            }
+                          )}
+                        </div>
+                      </div>
 
-                    {/* Left Side - DLMM and Profit/Loss */}
-                    <div className="absolute top-24 left-6">
-                      <div className="text-gray-400 text-sm font-medium mb-1">
-                        DLMM
-                      </div>
-                      <div className="text-white text-2xl font-bold mb-4">
-                       {pnlData.pairName}
-                      </div>
-                      <div className="text-gray-400 text-sm font-medium mb-1">
-                        {isProfit(pnlData) ? 'PROFIT (USD)' : 'LOSS (USD)'}
-                      </div>
-                      <div className={`text-5xl font-bold ${isProfit(pnlData) ? 'text-green-500' : 'text-red-500'}`}>
-                        {formatCurrency(pnlData.profitLossUSD || pnlData.profitLossAmount || '-271')}
-                      </div>
+                      {/* DLMM + Profit block */}
+                      {/* <div>
+                        <div className="text-gray-400 text-sm font-medium mb-1">
+                          DLMM
+                        </div>
+                        <div className="text-white text-4xl font-bold mb-4 leading-tight">
+                          {pnlData.pairName}
+                        </div>
+                        <div className="text-gray-400 text-sm font-medium mb-1">
+                          {isProfit(pnlData) ? 'PROFIT (USD)' : 'LOSS (USD)'}
+                        </div>
+                        <div
+                          className={`text-7xl font-bold leading-tight ${
+                            isProfit(pnlData) ? 'text-green-500' : 'text-red-500'
+                          }`}
+                        >
+                          {formatCurrency(
+                            pnlData.profitLossUSD || pnlData.profitLossAmount || '-271',
+                            {
+                              currency,
+                              exchangeRates,
+                            }
+                          )}
+                        </div>
+                      </div> */}
                     </div>
 
                     {/* Top Center - Hashtag */}
@@ -676,12 +1035,17 @@ const PnlCard = () => {
 
 
                     {/* Bottom Row - TVL, BIN STEP, BASE FEE, PNL (sejajar horizontal) */}
-                    <div className="absolute bottom-2 left-6 right-6">
-                      <div className="flex justify-between items-end">
+                    <div className="absolute bottom-3 left-6 right-6">
+                      <div className="flex justify-between items-end mb-2">
                         {/* TVL */}
                         <div>
                           <div className="text-gray-400 text-xs mb-0.5">TVL</div>
-                          <div className="text-white text-base font-medium">${pnlData.tvl || '277'}</div>
+                          <div className="text-white text-base font-medium">
+                            {formatCurrency(pnlData.tvl || pnlData.totalDepositUsd || 0, {
+                              currency,
+                              exchangeRates,
+                            })}
+                          </div>
                         </div>
 
                         {/* BIN STEP */}
@@ -709,7 +1073,7 @@ const PnlCard = () => {
                       </div> */}
                       <div className="flex justify-center">
                         <div className="text-gray-400 text-xs mb-0.5">
-                        {customBackgroundDataUrl ? 'DEV YANMAN' : 'DEV YANMAN & DESIGN NAOJ'}
+                        {customBackgroundDataUrl ? 'DEV YANMAN' : 'DEV YANMAN & DESIGN DOJIGATO'}
                         </div>
                       </div>
                     </div>

@@ -9,6 +9,7 @@ module.exports = {
     extend: {
       fontFamily: {
         anta: ['Anta', 'sans-serif'],
+        mono: ['"Space Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', '"Liberation Mono"', '"Courier New"', 'monospace'],
       },
     },
   },
