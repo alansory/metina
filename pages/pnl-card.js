@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import Head from 'next/head';
 import Header from '../components/Header';
+import Footer from '../components/Footer';
 import html2canvas from 'html2canvas';
 
 const HELIUS_RPC_URL =
@@ -970,7 +971,7 @@ const PnlCard = () => {
         <link rel="icon" href="/img/logo-gram.svg" type="image/svg+xml" />
       </Head>
 
-      <div className="min-h-screen bg-black text-white">
+      <div className="min-h-screen bg-black text-white pb-28">
         <Header />
 
         <div className="w-full max-w-2xl mx-auto px-4 py-6">
@@ -1322,6 +1323,7 @@ const PnlCard = () => {
           </p>
         </div>
       </div>
+      <Footer />
     </>
   );
 };

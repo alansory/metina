@@ -3,6 +3,7 @@ import Head from 'next/head';
 import { BiSortAlt2 } from 'react-icons/bi';
 import { FiRefreshCw } from 'react-icons/fi';
 import Header from '../components/Header';
+import Footer from '../components/Footer';
 
 // Time ago function
 const timeAgo = (timestamp) => {
@@ -318,8 +319,8 @@ const Scan = () => {
         <meta name="twitter:image" content={previewImage} />
       </Head>
 
-      <div className="min-h-screen bg-black text-white">
-      <Header />
+      <div className="min-h-screen bg-black text-white pb-28">
+        <Header />
 
       <div className="w-full max-w-full md:max-w-[1320px] mx-auto px-4 md:px-6">
         {/* Title Section */}
@@ -706,6 +707,7 @@ const Scan = () => {
         </div>
       )}
       </div>
+      <Footer />
     </>
   );
 };
