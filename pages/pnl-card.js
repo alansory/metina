@@ -11,8 +11,12 @@ const METEORA_API_BASE = 'https://dlmm-api.meteora.ag';
 const JUPITER_TOKEN_SEARCH = 'https://lite-api.jup.ag/tokens/v2/search?query=';
 const DLMM_PROGRAM_ID = 'LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo';
 const LAMPORTS_PER_SOL = 1_000_000_000;
-const DEFAULT_EXCHANGE_RATES = { USD: 1, IDR: 16_700 };
-const CURRENCY_OPTIONS = ['USD', 'IDR'];
+const DEFAULT_EXCHANGE_RATES = { USD: 1, IDR: 16_700, SOL: 150 };
+const CURRENCY_OPTIONS = ['USD', 'IDR', 'SOL'];
+const SOL_MINTS = [
+  'So11111111111111111111111111111111111111112', // Wrapped SOL
+  '11111111111111111111111111111111', // Native SOL mint
+];
 
 const PnlCard = () => {
   const [transactionInput, setTransactionInput] = useState('');
@@ -53,6 +57,22 @@ const PnlCard = () => {
         }
       } catch (err) {
         console.warn('Failed to fetch currency rates:', err?.message);
+      }
+
+      try {
+        const solResponse = await fetchJson('https://price.jup.ag/v6/price?ids=SOL', {
+          defaultValue: null,
+        });
+        const solPrice = solResponse?.data?.SOL?.price;
+
+        if (isMounted && solPrice) {
+          setExchangeRates((prev) => ({
+            ...prev,
+            SOL: solPrice,
+          }));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch SOL price:', err?.message);
       }
     };
 
@@ -190,16 +210,88 @@ const PnlCard = () => {
   //   return convertedValue < 0 ? `-${cleanFormatted}` : cleanFormatted;
   // };
 
+  const toNumericValue = (value, defaultValue = 0) => {
+    if (value === null || value === undefined || value === '') return defaultValue;
+    const numericValue = Number(String(value).replace(/[^0-9.-]/g, ''));
+    return Number.isNaN(numericValue) ? defaultValue : numericValue;
+  };
+
+  const toSubscript = (value) => {
+    const map = {
+      '0': '₀',
+      '1': '₁',
+      '2': '₂',
+      '3': '₃',
+      '4': '₄',
+      '5': '₅',
+      '6': '₆',
+      '7': '₇',
+      '8': '₈',
+      '9': '₉',
+    };
+
+    return String(value)
+      .split('')
+      .map((char) => map[char] || char)
+      .join('');
+  };
+
+  const formatSolValue = (value) => {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue) || numericValue === 0) {
+      return '0 SOL';
+    }
+
+    const abs = Math.abs(numericValue);
+    const sign = numericValue < 0 ? '-' : '';
+
+    if (abs < 1) {
+      const decimalString = abs.toFixed(12).replace(/0+$/, '');
+      const [, fractionalPart = ''] = decimalString.split('.');
+
+      if (fractionalPart) {
+        const zeroMatch = fractionalPart.match(/^(0+)/);
+        const leadingZeros = zeroMatch ? zeroMatch[0].length : 0;
+        if (leadingZeros >= 2) {
+          const significant = fractionalPart.slice(leadingZeros, leadingZeros + 3) || '0';
+          return `${sign}0.0${toSubscript(leadingZeros)}${significant} SOL`;
+        }
+      }
+    }
+
+    if (abs < 0.001) {
+      return `${sign}<0.001 SOL`;
+    }
+
+    let maxFractionDigits = 3;
+    if (abs < 1 && abs >= 0.1) {
+      maxFractionDigits = 4;
+    } else if (abs < 0.1 && abs >= 0.01) {
+      maxFractionDigits = 5;
+    } else if (abs < 0.01) {
+      maxFractionDigits = 6;
+    }
+
+    return `${numericValue.toLocaleString('en-US', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: maxFractionDigits,
+    })} SOL`;
+  };
+
   const formatCurrency = (
-    value,                                      // nilai dalam USD (contoh: 73.5)
+    value,
     { currency = 'USD', exchangeRates = DEFAULT_EXCHANGE_RATES } = {}
   ) => {
-    if (value === null || value === undefined || value === '') return '$0';
-  
-    let numericValue = parseFloat(value);
-    if (isNaN(numericValue)) return '$0';
-  
-    // Kalau USD → langsung format biasa
+    if (value === null || value === undefined || value === '') {
+      return currency === 'SOL' ? '0 SOL' : '$0';
+    }
+
+    const numericValue = toNumericValue(value);
+
+    if (currency === 'SOL') {
+      return formatSolValue(numericValue);
+    }
+
     if (currency === 'USD') {
       return new Intl.NumberFormat('en-US', {
         style: 'currency',
@@ -208,43 +300,53 @@ const PnlCard = () => {
         minimumFractionDigits: 0,
       }).format(numericValue);
     }
-  
-    // === KHUSUS IDR: konversi dulu ke IDR lalu singkat ===
-    const rate = exchangeRates.IDR || 16700;
-    const valueInIdr = numericValue * rate;        // <—— INI YANG SEBELUMNYA LUPA!
+
+    const rate = exchangeRates.IDR || DEFAULT_EXCHANGE_RATES.IDR;
+    const valueInIdr = numericValue * rate;
     const abs = Math.abs(valueInIdr);
-  
+
     let formatted;
     let suffix = '';
-  
-    if (abs >= 1_000_000_000) {           // ≥ 1 miliar
+
+    if (abs >= 1_000_000_000) {
       formatted = (abs / 1_000_000_000).toFixed(1).replace('.0', '');
       suffix = 'M';
-    } else if (abs >= 1_000_000) {        // ≥ 1 juta
+    } else if (abs >= 1_000_000) {
       formatted = (abs / 1_000_000).toFixed(1).replace('.0', '');
       suffix = 'JT';
-    } else if (abs >= 1_000) {            // ≥ 1 ribu (opsional)
+    } else if (abs >= 1_000) {
       formatted = Math.round(abs / 1_000);
       suffix = 'K';
     } else {
       formatted = Math.round(abs).toString();
     }
-  
-    // Pakai titik sebagai pemisah ribuan biar lebih rapi (opsional)
+
     const result = `Rp${Number(formatted).toLocaleString('id-ID')}${suffix}`;
-  
+
     return valueInIdr < 0 ? `-${result}` : result;
   };
 
-  const isProfit = (pnlData) => {
+  const isProfit = (pnlData, currency = 'USD') => {
     if (!pnlData) return false;
-    const profitLossUSD = pnlData.profitLossUSD || pnlData.profitLossAmount || '0';
-    const profitLossPercent = pnlData.profitLoss || '0%';
-    // Check if USD value is positive or percentage doesn't start with '-'
-    const usdValue = String(profitLossUSD).replace(/[^0-9.-]/g, '');
-    const percentValue = String(profitLossPercent);
-    return !usdValue.startsWith('-') && !percentValue.startsWith('-') && 
-           (parseFloat(usdValue) > 0 || parseFloat(percentValue.replace('%', '')) > 0);
+
+    if (currency === 'SOL') {
+      const solValue = toNumericValue(pnlData.profitLossAmountSOL);
+      if (solValue !== 0) {
+        return solValue > 0;
+      }
+      const solPercent = toNumericValue(pnlData.profitLossSolPercent);
+      if (solPercent !== 0) {
+        return solPercent > 0;
+      }
+    }
+
+    const usdValue = toNumericValue(pnlData.profitLossUSD || pnlData.profitLossAmount);
+    if (usdValue !== 0) {
+      return usdValue > 0;
+    }
+
+    const percentValue = toNumericValue(pnlData.profitLoss);
+    return percentValue > 0;
   };
 
   const extractTxId = (input) => {
@@ -399,8 +501,12 @@ const PnlCard = () => {
       0
     );
 
-  const sumTokenAmount = (items = [], field) =>
-    items.reduce((total, item) => total + Number(item?.[field] || 0), 0);
+  const detectSolTokenField = (pairInfo) => {
+    if (!pairInfo) return null;
+    if (SOL_MINTS.includes(pairInfo?.mint_x)) return 'token_x_amount';
+    if (SOL_MINTS.includes(pairInfo?.mint_y)) return 'token_y_amount';
+    return null;
+  };
 
   const getTimestampRange = (items = []) => {
     if (!items.length) {
@@ -433,22 +539,82 @@ const PnlCard = () => {
     claimFees,
     pairInfo,
     tokenInfo,
+    solPriceUsd,
   }) => {
     const totalDepositUsd = sumUsd(deposits);
     const totalWithdrawUsd = sumUsd(withdraws);
     const totalFeeUsd = sumUsd(claimFees);
     const totalRewardUsd = sumUsd(claimRewards);
 
-    const depositSol = sumTokenAmount(deposits, 'token_y_amount') / LAMPORTS_PER_SOL;
-    const withdrawSol = sumTokenAmount(withdraws, 'token_y_amount') / LAMPORTS_PER_SOL;
-    const feeSol = sumTokenAmount(claimFees, 'token_y_amount') / LAMPORTS_PER_SOL;
+    const solTokenField = detectSolTokenField(pairInfo);
+    const lamportsToSol = (amount) => amount / LAMPORTS_PER_SOL;
+
+    const solUsdField =
+      solTokenField === 'token_x_amount' ? 'token_x_usd_amount' : 'token_y_usd_amount';
+
+    const gatherSolPriceStats = (items = [], stats) => {
+      items.forEach((item) => {
+        const solLamports = Number(item?.[solTokenField] || 0);
+        const solAmount = lamportsToSol(solLamports);
+        const solUsd = Number(item?.[solUsdField] || 0);
+        if (solAmount > 0 && solUsd > 0) {
+          stats.sol += solAmount;
+          stats.usd += solUsd;
+        }
+      });
+    };
+
+    const priceStats = { sol: 0, usd: 0 };
+    if (solTokenField) {
+      gatherSolPriceStats(deposits, priceStats);
+      gatherSolPriceStats(withdraws, priceStats);
+      gatherSolPriceStats(claimFees, priceStats);
+      gatherSolPriceStats(claimRewards, priceStats);
+    }
+
+    const derivedSolPriceUsd =
+      priceStats.sol > 0 ? priceStats.usd / priceStats.sol : null;
+    const effectiveSolPriceUsd =
+      solPriceUsd || derivedSolPriceUsd || DEFAULT_EXCHANGE_RATES.SOL;
+
+    const getEventSolPrice = (item) => {
+      if (!solTokenField) return null;
+      const solLamports = Number(item?.[solTokenField] || 0);
+      const solAmount = lamportsToSol(solLamports);
+      const solUsd = Number(item?.[solUsdField] || 0);
+      if (solAmount > 0 && solUsd > 0) {
+        return solUsd / solAmount;
+      }
+      return null;
+    };
+
+    const convertUsdListToSol = (items = []) =>
+      items.reduce((total, item) => {
+        const usdValue =
+          Number(item?.token_x_usd_amount || 0) +
+          Number(item?.token_y_usd_amount || 0);
+        if (!usdValue) return total;
+        const eventSolPrice = getEventSolPrice(item);
+        const price = eventSolPrice || effectiveSolPriceUsd;
+        if (!price || price <= 0) return total;
+        return total + usdValue / price;
+      }, 0);
+
+    const depositSol = convertUsdListToSol(deposits);
+    const withdrawSol = convertUsdListToSol(withdraws);
+    const feeSol = convertUsdListToSol(claimFees);
+    const rewardSol = convertUsdListToSol(claimRewards);
 
     const profitLossUSD = totalWithdrawUsd + totalFeeUsd + totalRewardUsd - totalDepositUsd;
     const profitLossPercent =
       totalDepositUsd > 0
         ? `${((profitLossUSD / totalDepositUsd) * 100).toFixed(2)}%`
         : '0%';
-    const profitLossAmountSOL = withdrawSol + feeSol - depositSol;
+    const profitLossAmountSOL = withdrawSol + feeSol + rewardSol - depositSol;
+    const profitLossPercentSOL =
+      depositSol > 0
+        ? `${((profitLossAmountSOL / depositSol) * 100).toFixed(2)}%`
+        : '0%';
 
     const depositTimestamps = getTimestampRange(deposits);
     const withdrawTimestamps = getTimestampRange(withdraws);
@@ -477,6 +643,7 @@ const PnlCard = () => {
 
     // TVL shown on card should reflect the user's total capital deposited
     const tvl = Number(totalDepositUsd.toFixed(2));
+    const tvlSol = Number(depositSol.toFixed(3));
 
     const openTimeISO = openTimestamp ? new Date(openTimestamp * 1000).toISOString() : null;
     const closeTimeISO = closeTimestamp ? new Date(closeTimestamp * 1000).toISOString() : null;
@@ -492,6 +659,8 @@ const PnlCard = () => {
       profitLossAmount: profitLossUSD.toFixed(2),
       profitLossAmountSOL: profitLossAmountSOL.toFixed(3),
       profitLossUSD: profitLossUSD.toFixed(2),
+      profitLossSolPercent: profitLossPercentSOL,
+      solPriceUsd: effectiveSolPriceUsd,
       pairName,
       openTime: openTimeISO,
       closeTime: closeTimeISO,
@@ -504,9 +673,11 @@ const PnlCard = () => {
         ? `${pairInfo.base_fee_percentage}%`
         : null,
       tvl,
+      tvlSol,
       owner: position?.owner,
       pairAddress: position?.pair_address,
       totalDepositUsd: totalDepositUsd.toFixed(2),
+      totalDepositSol: depositSol.toFixed(3),
       totalWithdrawUsd: totalWithdrawUsd.toFixed(2),
       totalFeeUsd: totalFeeUsd.toFixed(4),
       totalRewardUsd: totalRewardUsd.toFixed(4),
@@ -757,6 +928,7 @@ const PnlCard = () => {
         claimFees,
         pairInfo,
         tokenInfo,
+        solPriceUsd: exchangeRates.SOL,
       });
   
       setPnlData(payload);
@@ -766,6 +938,29 @@ const PnlCard = () => {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const getProfitDisplayValue = () => {
+    if (!pnlData) return currency === 'SOL' ? '0' : 0;
+    if (currency === 'SOL') {
+      return pnlData.profitLossAmountSOL || '0';
+    }
+    return pnlData.profitLossUSD || pnlData.profitLossAmount || 0;
+  };
+
+  const getTvlDisplayValue = () => {
+    if (!pnlData) return currency === 'SOL' ? '0' : 0;
+    if (currency === 'SOL') {
+      return pnlData.tvlSol || pnlData.totalDepositSol || '0';
+    }
+    return pnlData.tvl || pnlData.totalDepositUsd || 0;
+  };
+
+  const getProfitPercentDisplayValue = () => {
+    if (!pnlData) return '0%';
+    return currency === 'SOL'
+      ? pnlData.profitLossSolPercent || '0%'
+      : pnlData.profitLoss || '0%';
   };
 
   return (
@@ -913,7 +1108,7 @@ const PnlCard = () => {
                   <img
                     src={
                       customBackgroundDataUrl ||
-                      (isProfit(pnlData) ? '/img/win-v1.png' : '/img/loss-v1.png')
+                      (isProfit(pnlData, currency) ? '/img/win-v1.png' : '/img/loss-v1.png')
                     }
                     alt="PNL Card"
                     className="w-full h-auto rounded-md"
@@ -938,22 +1133,19 @@ const PnlCard = () => {
                       </div>
                       <div>
                         <div className="text-gray-400 text-sm font-medium">
-                          {isProfit(pnlData)
+                          {isProfit(pnlData, currency)
                             ? `PROFIT (${currency})`
                             : `LOSS (${currency})`}
                         </div>
                         <div
                           className={`text-7xl font-bold leading-tight mt-[-15px] ${
-                            isProfit(pnlData) ? 'text-green-500' : 'text-red-500'
+                            isProfit(pnlData, currency) ? 'text-green-500' : 'text-red-500'
                           }`}
                         >
-                          {formatCurrency(
-                            pnlData.profitLossUSD || pnlData.profitLossAmount || '-271',
-                            {
-                              currency,
-                              exchangeRates,
-                            }
-                          )}
+                          {formatCurrency(getProfitDisplayValue(), {
+                            currency,
+                            exchangeRates,
+                          })}
                         </div>
                       </div>
 
@@ -987,7 +1179,7 @@ const PnlCard = () => {
                     {/* Top Center - Hashtag */}
                     <div className="absolute top-4 left-1/2 -translate-x-1/2">
                       <div className="text-gray-400 text-base font-medium">
-                        {isProfit(pnlData) ? '#GUDFEETEK' : '#SKILLISSUE'}
+                        {isProfit(pnlData, currency) ? '#GUDFEETEK' : '#SKILLISSUE'}
                       </div>
                     </div>
 
@@ -1041,7 +1233,7 @@ const PnlCard = () => {
                         <div>
                           <div className="text-gray-400 text-xs mb-0.5">TVL</div>
                           <div className="text-white text-base font-medium">
-                            {formatCurrency(pnlData.tvl || pnlData.totalDepositUsd || 0, {
+                            {formatCurrency(getTvlDisplayValue(), {
                               currency,
                               exchangeRates,
                             })}
@@ -1063,8 +1255,8 @@ const PnlCard = () => {
                         {/* PNL */}
                         <div className="text-right">
                           <div className="text-gray-400 text-xs mb-0.5">PNL</div>
-                          <div className={`text-base font-medium ${isProfit(pnlData) ? 'text-green-500' : 'text-red-500'}`}>
-                            {pnlData.profitLoss || '-97.85%'}
+                          <div className={`text-base font-medium ${isProfit(pnlData, currency) ? 'text-green-500' : 'text-red-500'}`}>
+                            {getProfitPercentDisplayValue()}
                           </div>
                         </div>
                       </div>
