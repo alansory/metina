@@ -77,7 +77,7 @@ const Header = () => {
 
   return (
     <>
-      <header className="flex justify-between items-center px-[18px] py-[6px] h-14 bg-black border-b border-gray-800 z-50 relative">
+      <header className="fixed top-0 inset-x-0 flex justify-between items-center px-[18px] py-[6px] h-14 bg-black/95 backdrop-blur-sm border-b border-gray-800 z-50">
         <div className="flex items-center gap-4">
           <Image 
             src="/img/metina.png" 
@@ -125,7 +125,11 @@ const Header = () => {
           </div>
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="md:hidden text-white hover:text-orange-500 transition p-2"
+            className={`md:hidden transition p-2 ${
+              isMobileMenuOpen 
+                ? 'text-orange-500' 
+                : 'text-white'
+            }`}
             aria-label="Toggle menu"
           >
             <svg
@@ -147,7 +151,7 @@ const Header = () => {
         </div>
       </header>
       {isMobileMenuOpen && (
-        <div className="md:hidden bg-black border-b border-gray-800 z-40">
+        <div className="fixed top-14 inset-x-0 md:hidden bg-black/95 backdrop-blur-sm border-b border-gray-800 z-40">
           <nav className="flex flex-col py-4 gap-2">
             <Link 
               href="/"

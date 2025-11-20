@@ -319,7 +319,7 @@ const Scan = () => {
         <meta name="twitter:image" content={previewImage} />
       </Head>
 
-      <div className="min-h-screen bg-black text-white pb-28">
+      <div className="min-h-screen bg-black text-white pb-28 pt-14">
         <Header />
 
       <div className="w-full max-w-full md:max-w-[1320px] mx-auto px-4 md:px-6">
