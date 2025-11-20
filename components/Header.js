@@ -80,7 +80,7 @@ const Header = () => {
       <header className="fixed top-0 inset-x-0 flex justify-between items-center px-[18px] py-[6px] h-14 bg-black/95 backdrop-blur-sm border-b border-gray-800 z-50">
         <div className="flex items-center gap-4">
           <Image 
-            src="/img/metina.png" 
+            src="/img/metina-logo.png" 
             alt="Metina Logo" 
             width={32} 
             height={32}
@@ -112,6 +112,16 @@ const Header = () => {
               }`}
             >
               PNL
+            </Link>
+            <Link 
+              href="/portfolio"
+              className={`px-3 py-1.5 rounded-md transition font-medium text-xs ${
+                router.pathname === '/portfolio' 
+                  ? 'text-orange-500 lg:text-orange-500' 
+                  : 'text-white hover:text-orange-500'
+              }`}
+            >
+              PORTO
             </Link>
           </nav>
         </div>
@@ -166,6 +176,13 @@ const Header = () => {
               className="px-3 py-2 rounded-md text-white text-xs hover:text-orange-500 hover:bg-gray-800 transition font-medium"
             >
               PNL
+            </Link>
+            <Link 
+              href="/portfolio"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-md text-white text-xs hover:text-orange-500 hover:bg-gray-800 transition font-medium"
+            >
+              PORTO
             </Link>
             <div className="flex items-center gap-2 text-gray-400 text-xs pt-2 border-t border-gray-800">
               <div className="flex items-center gap-1.5 px-3">

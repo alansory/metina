@@ -975,6 +975,14 @@ const PnlCard = () => {
         <Header />
 
         <div className="w-full max-w-2xl mx-auto px-4 py-6">
+          <div className="flex items-center justify-center gap-3 mb-2">
+            <h1 className="text-3xl font-bold">Generate PNL Card</h1>
+          </div>
+          <div className="text-center mb-6">
+            <p className="text-gray-400 text-sm">
+              Paste a DLMM tx For opening, claiming, or closing a position. 
+            </p>
+          </div>
           {/* Tab */}
           <div className="flex justify-center mb-4">
             <button className="px-4 py-1.5 rounded-md font-medium text-xs text-white bg-gray-900 border border-orange-500">
@@ -990,50 +998,29 @@ const PnlCard = () => {
               onChange={(e) => setTransactionInput(e.target.value)}
               onKeyPress={(e) => e.key === 'Enter' && handleGeneratePnl()}
               placeholder="Put your transaction here"
-              className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 pr-10 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition"
+              className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 pr-20 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition"
             />
             <button
               onClick={handleGeneratePnl}
               disabled={isGenerating}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 text-gray-400 hover:text-orange-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center h-full transition disabled:opacity-50 disabled:cursor-not-allowed"
               aria-label="Generate PNL card"
             >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
-                <path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-              </svg>
+              <div className="h-full px-2 rounded-l-md"></div>
+              <div className="bg-orange-500 h-full flex items-center justify-center px-2.5 rounded-r-md hover:bg-orange-400 transition">
+                <svg
+                  className="w-5 h-5 text-white"
+                  fill="none"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                </svg>
+              </div>
             </button>
-          </div>
-
-          {/* Currency Selector */}
-          <div className="flex justify-center items-center gap-3 mb-4 text-xs">
-            <span className="text-gray-400 uppercase tracking-wide">Currency</span>
-            <div className="flex bg-gray-900 border border-gray-700 rounded-md overflow-hidden">
-              {CURRENCY_OPTIONS.map((option) => {
-                const isActive = currency === option;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => setCurrency(option)}
-                    className={`px-3 py-1 font-semibold transition ${
-                      isActive
-                        ? 'bg-orange-500 text-black'
-                        : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    {option}
-                  </button>
-                );
-              })}
-            </div>
           </div>
 
           {/* Custom Background Field */}
@@ -1064,6 +1051,32 @@ const PnlCard = () => {
               <p className="text-xs text-red-400">{backgroundError}</p>
             )}
           </div>
+
+          {/* Currency Selector - Only show after PNL is generated */}
+          {pnlData && (
+            <div className="flex justify-center items-center gap-3 mb-4 text-xs">
+              <span className="text-gray-400 uppercase tracking-wide">Currency</span>
+              <div className="flex bg-gray-900 border border-gray-700 rounded-md overflow-hidden">
+                {CURRENCY_OPTIONS.map((option) => {
+                  const isActive = currency === option;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => setCurrency(option)}
+                      className={`px-3 py-1 font-semibold transition ${
+                        isActive
+                          ? 'bg-orange-500 text-black'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      {option}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Error Message */}
           {error && (
@@ -1319,7 +1332,7 @@ const PnlCard = () => {
 
           {/* Instructional Text */}
           <p className="text-gray-400 text-xs text-center mt-4">
-            Paste a DLMM tx For opening, claiming, or closing a position. Supports links (Solscan, SolBeach, SolExplorer, SolanaFM, OKLink) and tx IDs
+            Supports links (Solscan, SolBeach, SolExplorer, SolanaFM, OKLink) and tx IDs
           </p>
         </div>
       </div>

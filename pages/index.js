@@ -324,8 +324,8 @@ const Scan = () => {
 
       <div className="w-full max-w-full md:max-w-[1320px] mx-auto px-4 md:px-6">
         {/* Title Section */}
-        <div className="text-center py-4 mt-7">
-          <h1 className="text-2xl md:text-3xl font-mono mb-2">Dive Deep into Solana's Liquidity</h1>
+        <div className="text-center py-6">
+          <h1 className="text-2xl md:text-3xl font-bold mb-2">Dive Deep into Solana's Liquidity</h1>
           <p className="text-gray-400 text-xs md:text-base">
             Scan Fast • Deepest Liquidity • Trade Smart
           </p>
@@ -578,8 +578,28 @@ const Scan = () => {
 
       {/* Loading and Error States */}
       {loading && (
-        <div className="text-center py-10">
-          <p className="text-gray-400">Loading {activeTab} token data...</p>
+        <div className="mb-4 flex flex-col items-center gap-2 text-center py-10">
+          <svg
+            className="w-8 h-8 text-orange-500 animate-spin"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            ></circle>
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
+            ></path>
+          </svg>
+          <div className="text-gray-400 text-xs">Loading {activeTab} token data...</div>
         </div>
       )}
 
