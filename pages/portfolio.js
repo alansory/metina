@@ -757,43 +757,45 @@ const Portfolio = () => {
     }
   };
 
-  const calculateUPNL = (currentTvlUsd, netDepositUsd, solPriceUsd, unclaimedFeesUsd = 0, claimedFeesUsd = 0) => {
+  // Calculate UPNL in SOL first, then convert to other currencies
+  // All calculations are done in SOL (base currency) to avoid double conversion errors
+  const calculateUPNL = (currentTvlSol, netDepositSol, solPriceUsd, unclaimedFeesSol = 0, claimedFeesSol = 0) => {
     // UPNL = (Current TVL + Unclaimed Fees + Claimed Fees) - Net Deposits
-    // This includes all profit/loss from the position including fees earned
-    // - TVL = Current value of liquidity position
-    // - Unclaimed Fees = Fees earned but not yet claimed
-    // - Claimed Fees = Fees already claimed
-    // - Net Deposits = total deposits - total withdraws (your actual investment)
-    const totalValueUsd = currentTvlUsd + unclaimedFeesUsd + claimedFeesUsd;
-    const upnlUsd = totalValueUsd - netDepositUsd;
+    // All values are in SOL
+    // - TVL = Current value of liquidity position (in SOL)
+    // - Unclaimed Fees = Fees earned but not yet claimed (in SOL)
+    // - Claimed Fees = Fees already claimed (in SOL)
+    // - Net Deposits = total deposits - total withdraws (in SOL)
+    const totalValueSol = currentTvlSol + unclaimedFeesSol + claimedFeesSol;
+    const upnlSol = totalValueSol - netDepositSol;
     
     // Calculate percentage - handle division by zero
     // Use net deposits (actual investment) for percentage calculation
     let upnlPercent = 0;
-    if (netDepositUsd > 0) {
-      upnlPercent = (upnlUsd / netDepositUsd) * 100;
-    } else if (netDepositUsd === 0 && totalValueUsd > 0) {
+    if (netDepositSol > 0) {
+      upnlPercent = (upnlSol / netDepositSol) * 100;
+    } else if (netDepositSol === 0 && totalValueSol > 0) {
       // If no net deposits but has value (including fees), it's infinite gain (show as 100%)
       upnlPercent = 100;
-    } else if (netDepositUsd === 0 && totalValueUsd === 0) {
+    } else if (netDepositSol === 0 && totalValueSol === 0) {
       // No net deposits and no value
       upnlPercent = 0;
-    } else if (netDepositUsd === 0 && totalValueUsd < 0) {
+    } else if (netDepositSol === 0 && totalValueSol < 0) {
       // Negative value with no net deposits (shouldn't happen, but handle it)
       upnlPercent = -100;
-    } else if (netDepositUsd < 0) {
+    } else if (netDepositSol < 0) {
       // If net deposits is negative (more withdraws than deposits), calculate percentage differently
       // This can happen if user withdrew more than deposited
-      upnlPercent = netDepositUsd !== 0 ? (upnlUsd / Math.abs(netDepositUsd)) * 100 : 0;
+      upnlPercent = netDepositSol !== 0 ? (upnlSol / Math.abs(netDepositSol)) * 100 : 0;
     }
 
-    // Convert to SOL
+    // Convert SOL to USD using current SOL price
     const effectiveSolPrice = solPriceUsd || DEFAULT_EXCHANGE_RATES.SOL;
-    const upnlSol = effectiveSolPrice > 0 ? upnlUsd / effectiveSolPrice : 0;
+    const upnlUsd = effectiveSolPrice > 0 ? upnlSol * effectiveSolPrice : 0;
 
     return {
-      usd: upnlUsd,
       sol: upnlSol,
+      usd: upnlUsd,
       percent: upnlPercent,
     };
   };
@@ -806,6 +808,141 @@ const Portfolio = () => {
         Number(item?.token_y_usd_amount || 0),
       0
     );
+
+  // Convert deposits/withdraws to SOL
+  // Each item has token_x_amount, token_y_amount, and their USD values
+  // We need to convert both tokens to SOL
+  // IMPORTANT: token_x_amount and token_y_amount from API might be in raw format (with decimals)
+  const sumSol = async (items = [], pairInfo, tokenXDecimals = 6) => {
+    if (!items || items.length === 0) return 0;
+    
+    let totalSol = 0;
+    const solPrice = exchangeRates.SOL || DEFAULT_EXCHANGE_RATES.SOL;
+    const isYSol = pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y);
+    const tokenYDecimals = pairInfo?.token_y?.decimals || (isYSol ? 9 : 9);
+    
+    for (const item of items) {
+      // Convert token_x (meme coin) to SOL
+      let tokenXAmount = Number(item?.token_x_amount || 0);
+      
+      // Check if tokenXAmount is in raw format (very large number)
+      // If it's suspiciously large, convert from raw format
+      const xRawThreshold = Math.pow(10, tokenXDecimals);
+      if (tokenXAmount >= xRawThreshold) {
+        tokenXAmount = tokenXAmount / Math.pow(10, tokenXDecimals);
+        console.log(`[sumSol] Converted tokenX from raw: ${item?.token_x_amount} -> ${tokenXAmount} (decimals: ${tokenXDecimals})`);
+      }
+      
+      if (tokenXAmount > 0 && pairInfo?.mint_x) {
+        const isXSol = pairInfo.mint_x && SOL_MINTS.includes(pairInfo.mint_x);
+        if (isXSol) {
+          totalSol += tokenXAmount;
+        } else {
+          // Convert meme coin to SOL using Jupiter API
+          try {
+            const solAmount = await convertMemeCoinToSol(pairInfo.mint_x, tokenXAmount, tokenXDecimals);
+            if (solAmount > 0) {
+              totalSol += solAmount;
+            }
+          } catch (err) {
+            // Fallback: use reserves if Jupiter fails
+            if (pairInfo.mint_y && SOL_MINTS.includes(pairInfo.mint_y)) {
+              const reserveX = Number(pairInfo.reserve_x || pairInfo.token_x_reserve || pairInfo.x_reserve || pairInfo.reserveX || 0);
+              const reserveY = Number(pairInfo.reserve_y || pairInfo.token_y_reserve || pairInfo.y_reserve || pairInfo.reserveY || 0);
+              if (reserveX > 0 && reserveY > 0) {
+                const reserveYInSol = reserveY > 1e9 ? reserveY / LAMPORTS_PER_SOL : reserveY;
+                const solAmount = (tokenXAmount * reserveYInSol) / reserveX;
+                totalSol += solAmount;
+              }
+            }
+          }
+        }
+      }
+      
+      // Convert token_y (SOL or other) to SOL
+      let tokenYAmount = Number(item?.token_y_amount || 0);
+      
+      // Check if tokenYAmount is in raw format
+      if (tokenYAmount > 0) {
+        if (isYSol) {
+          // SOL: if amount > 1, it's likely in lamports (raw format)
+          if (tokenYAmount >= 1) {
+            tokenYAmount = tokenYAmount / LAMPORTS_PER_SOL;
+            console.log(`[sumSol] Converted tokenY (SOL) from lamports: ${item?.token_y_amount} -> ${tokenYAmount} SOL`);
+          }
+          totalSol += tokenYAmount;
+        } else {
+          // If Y is not SOL, check if it's in raw format
+          const yRawThreshold = Math.pow(10, tokenYDecimals);
+          if (tokenYAmount >= yRawThreshold) {
+            tokenYAmount = tokenYAmount / Math.pow(10, tokenYDecimals);
+            console.log(`[sumSol] Converted tokenY from raw: ${item?.token_y_amount} -> ${tokenYAmount} (decimals: ${tokenYDecimals})`);
+          }
+          // For now, skip if Y is not SOL (would need Jupiter API to convert)
+        }
+      }
+    }
+    
+    console.log(`[sumSol] Total SOL: ${totalSol.toFixed(6)} SOL`);
+    
+    // Validate: if totalSol is unreasonably large (> 1 million SOL), something is wrong
+    if (totalSol > 1_000_000) {
+      console.error(`[sumSol] WARNING: Total SOL is unreasonably large: ${totalSol.toFixed(6)} SOL. This might indicate raw format values were not converted properly.`);
+      // Try to detect if values are in raw format by checking if dividing by decimals helps
+      // But for now, just log the warning
+    }
+    
+    return totalSol;
+  };
+
+  // Format token amount with K/M/B suffixes (like Meteora)
+  // Meteora uses: K for >= 1,000, M for >= 1,000,000, B for >= 1,000,000,000
+  const formatTokenAmount = (value, decimals = 2) => {
+    if (value === null || value === undefined || value === '') {
+      return '0';
+    }
+
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue) || numericValue === 0) {
+      return '0';
+    }
+
+    const abs = Math.abs(numericValue);
+    let formatted;
+    let suffix = '';
+
+    if (abs >= 1_000_000_000) {
+      // Billions: 12.14B (format: 2 decimals, uppercase B)
+      const billions = abs / 1_000_000_000;
+      formatted = billions.toFixed(decimals);
+      // Remove trailing zeros but keep at least one decimal if needed
+      formatted = formatted.replace(/\.?0+$/, '');
+      suffix = 'B';
+    } else if (abs >= 1_000_000) {
+      // Millions: 415.94M (format: 2 decimals, uppercase M)
+      const millions = abs / 1_000_000;
+      formatted = millions.toFixed(decimals);
+      formatted = formatted.replace(/\.?0+$/, '');
+      suffix = 'M';
+    } else if (abs >= 1_000) {
+      // Thousands: 1.02K or 13.98K (format: 2 decimals, uppercase K)
+      const thousands = abs / 1_000;
+      formatted = thousands.toFixed(decimals);
+      formatted = formatted.replace(/\.?0+$/, '');
+      suffix = 'K';
+    } else {
+      // Less than 1000: 523 or 964.69 (format: show decimals if needed, no suffix)
+      // For numbers < 1, show decimals, for numbers >= 1, show decimals if needed
+      if (abs < 1) {
+        formatted = abs.toFixed(Math.max(decimals, 4)).replace(/\.?0+$/, '');
+      } else {
+        // For numbers >= 1 and < 1000, show up to 2 decimals if needed
+        formatted = abs.toFixed(decimals).replace(/\.?0+$/, '');
+      }
+    }
+
+    return `${numericValue < 0 ? '-' : ''}${formatted}${suffix}`;
+  };
 
   const formatCurrency = (
     value,
@@ -1027,6 +1164,9 @@ const Portfolio = () => {
             { defaultValue: null }
           );
 
+          // Get token decimals early (needed for sumSol)
+          const tokenXDecimals = pairInfo?.token_x?.decimals || 6;
+
           // Fetch wallet earning data for this wallet and pair
           // This gives us claimed fees and rewards
           let walletEarning = null;
@@ -1050,6 +1190,9 @@ const Portfolio = () => {
           // Calculate total withdraws in USD  
           const totalWithdrawUsd = sumUsd(withdraws);
           
+          // Calculate net deposits in USD (for display purposes)
+          const netDepositUsd = totalDepositUsd - totalWithdrawUsd;
+          
           // TVL = Current value of position (current balance)
           // Priority: Always use SDK positionData for realtime data from blockchain
           let tvlUsd = 0;
@@ -1066,12 +1209,24 @@ const Portfolio = () => {
           if (sdkPosition && sdkPosition.positionData) {
             const posData = sdkPosition.positionData;
             
-            const totalXAmount = posData.totalXAmount ? Number(posData.totalXAmount.toString ? posData.totalXAmount.toString() : posData.totalXAmount) : 0;
-            const totalYAmount = posData.totalYAmount ? Number(posData.totalYAmount.toString ? posData.totalYAmount.toString() : posData.totalYAmount) : 0;
+            // Get token decimals first (needed for conversion)
+            const tempTokenXDecimals = pairInfo?.token_x?.decimals || 6;
+            const tempTokenYDecimals = pairInfo?.token_y?.decimals || 9;
+            const tempIsYSol = pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y);
             
-            // Store current balance for display
-            currentBalanceX = totalXAmount;
-            currentBalanceY = totalYAmount;
+            const totalXAmountRaw = posData.totalXAmount ? Number(posData.totalXAmount.toString ? posData.totalXAmount.toString() : posData.totalXAmount) : 0;
+            const totalYAmountRaw = posData.totalYAmount ? Number(posData.totalYAmount.toString ? posData.totalYAmount.toString() : posData.totalYAmount) : 0;
+            
+            // SDK returns amounts in raw format (with decimals), so convert to human-readable format
+            // Store current balance for display (already converted)
+            currentBalanceX = totalXAmountRaw / Math.pow(10, tempTokenXDecimals);
+            if (tempIsYSol) {
+              currentBalanceY = totalYAmountRaw / LAMPORTS_PER_SOL;
+            } else {
+              currentBalanceY = totalYAmountRaw / Math.pow(10, tempTokenYDecimals);
+            }
+            
+            console.log(`[handleFetchPositions] SDK balance (raw -> converted): X: ${totalXAmountRaw} -> ${currentBalanceX}, Y: ${totalYAmountRaw} -> ${currentBalanceY}`);
             
             // Convert to USD using realtime prices from pair reserves
             let xPrice = 0;
@@ -1141,12 +1296,12 @@ const Portfolio = () => {
               }
             }
             
-            // Calculate TVL from realtime amounts and prices
-            if (totalXAmount > 0 && xPrice > 0) {
-              tokenXUsd = totalXAmount * xPrice;
+            // Calculate TVL from realtime amounts and prices (use converted balances)
+            if (currentBalanceX > 0 && xPrice > 0) {
+              tokenXUsd = currentBalanceX * xPrice;
             }
-            if (totalYAmount > 0 && yPrice > 0) {
-              tokenYUsd = totalYAmount * yPrice;
+            if (currentBalanceY > 0 && yPrice > 0) {
+              tokenYUsd = currentBalanceY * yPrice;
             }
             
             tvlUsd = tokenXUsd + tokenYUsd;
@@ -1696,9 +1851,74 @@ const Portfolio = () => {
           // Calculate total unclaimed fees: SOL fees + Meme coin fees
           totalUnclaimedFeeUsd = unclaimedFeeXUsd + unclaimedFeeYUsd;
           
-          // Calculate UPNL: (Current TVL + Unclaimed Fees + Claimed Fees) - Net deposits
-          const netDepositUsd = totalDepositUsd - totalWithdrawUsd;
-          const upnl = calculateUPNL(tvlUsd, netDepositUsd, exchangeRates.SOL, totalUnclaimedFeeUsd, totalClaimedFeeUsd);
+          // Calculate UPNL in SOL first (base currency), then convert to other currencies
+          // Step 1: Convert all deposits and withdraws to SOL (including meme coin)
+          const solPriceForUpnl = exchangeRates.SOL || DEFAULT_EXCHANGE_RATES.SOL;
+          
+          // Convert deposits to SOL (each deposit has token_x and token_y, convert both to SOL)
+          console.log(`[handleRefreshPositions] Converting ${deposits.length} deposits to SOL...`);
+          const totalDepositSol = await sumSol(deposits, pairInfo, tokenXDecimals);
+          console.log(`[handleRefreshPositions] Total Deposits: ${totalDepositSol.toFixed(6)} SOL ($${totalDepositUsd.toFixed(2)})`);
+          
+          // Convert withdraws to SOL (each withdraw has token_x and token_y, convert both to SOL)
+          console.log(`[handleRefreshPositions] Converting ${withdraws.length} withdraws to SOL...`);
+          const totalWithdrawSol = await sumSol(withdraws, pairInfo, tokenXDecimals);
+          console.log(`[handleRefreshPositions] Total Withdraws: ${totalWithdrawSol.toFixed(6)} SOL ($${totalWithdrawUsd.toFixed(2)})`);
+          
+          // Net deposits = Total deposits - Total withdraws (all in SOL)
+          const netDepositSol = totalDepositSol - totalWithdrawSol;
+          const netDepositUsdForLog = totalDepositUsd - totalWithdrawUsd;
+          console.log(`[handleRefreshPositions] Net Deposits: ${netDepositSol.toFixed(6)} SOL ($${netDepositUsdForLog.toFixed(2)})`);
+          
+          // Convert current balance to SOL
+          // Use currentBalanceX and currentBalanceY (already converted from raw format)
+          // Convert balanceX (meme coin) to SOL using Jupiter API or reserves
+          let balanceXSol = 0;
+          if (currentBalanceX > 0 && pairInfo?.mint_x) {
+            const isXSol = pairInfo.mint_x && SOL_MINTS.includes(pairInfo.mint_x);
+            if (isXSol) {
+              balanceXSol = currentBalanceX;
+            } else {
+              // Convert meme coin to SOL using Jupiter API
+              try {
+                const tokenXDecimalsForConversion = pairInfo?.token_x?.decimals || tokenXDecimals;
+                balanceXSol = await convertMemeCoinToSol(pairInfo.mint_x, currentBalanceX, tokenXDecimalsForConversion);
+              } catch (err) {
+                // Fallback: use reserves if Jupiter fails
+                if (pairInfo.mint_y && SOL_MINTS.includes(pairInfo.mint_y)) {
+                  const reserveX = Number(pairInfo.reserve_x || pairInfo.token_x_reserve || pairInfo.x_reserve || pairInfo.reserveX || 0);
+                  const reserveY = Number(pairInfo.reserve_y || pairInfo.token_y_reserve || pairInfo.y_reserve || pairInfo.reserveY || 0);
+                  if (reserveX > 0 && reserveY > 0) {
+                    const reserveYInSol = reserveY > 1e9 ? reserveY / LAMPORTS_PER_SOL : reserveY;
+                    balanceXSol = (currentBalanceX * reserveYInSol) / reserveX;
+                  }
+                }
+              }
+            }
+          }
+          
+          // Convert balanceY to SOL
+          let balanceYSol = 0;
+          const tempIsYSol = pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y);
+          if (currentBalanceY > 0) {
+            if (tempIsYSol) {
+              balanceYSol = currentBalanceY; // Already in SOL
+            } else {
+              // If Y is not SOL, convert to SOL (shouldn't happen in most cases, but handle it)
+              balanceYSol = 0; // For now, assume 0 if Y is not SOL
+            }
+          }
+          
+          // Current TVL in SOL = balanceX in SOL + balanceY in SOL
+          const tvlSol = balanceXSol + balanceYSol;
+          
+          // Convert fees to SOL (fees are already calculated in USD, convert back to SOL)
+          const unclaimedFeesSol = solPriceForUpnl > 0 ? totalUnclaimedFeeUsd / solPriceForUpnl : 0;
+          const claimedFeesSol = solPriceForUpnl > 0 ? totalClaimedFeeUsd / solPriceForUpnl : 0;
+          
+          // Calculate UPNL in SOL
+          // UPNL = (Current Balance SOL + Claimed Fees SOL + Unclaimed Fees SOL) - Net Deposits SOL
+          const upnl = calculateUPNL(tvlSol, netDepositSol, solPriceForUpnl, unclaimedFeesSol, claimedFeesSol);
 
           // Final validation: Skip position if TVL is 0 or very small
           const MIN_TVL_THRESHOLD = 0.01;
@@ -1706,39 +1926,39 @@ const Portfolio = () => {
             return null;
           }
 
-          // Get token decimals for proper display
-          let tokenXDecimals = pairInfo?.token_x?.decimals || 6;
+          // Get token decimals for proper display (tokenXDecimals already defined earlier)
           let tokenYDecimals = pairInfo?.token_y?.decimals || 9;
           const isYSol = pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y);
           if (isYSol) {
             tokenYDecimals = 9; // SOL has 9 decimals
           }
 
-          // Format balance amounts (convert from raw if needed)
+          // Format balance amounts
+          // Note: currentBalanceX and currentBalanceY are already converted from raw format if from SDK
           let balanceX = currentBalanceX;
           let balanceY = currentBalanceY;
-          
-          // Check if balances are in raw format and convert
-          // For SOL (9 decimals), if balance > 1, it's likely in lamports (raw format)
-          if (isYSol && balanceY > 1) {
-            balanceY = balanceY / LAMPORTS_PER_SOL;
-            console.log(`[handleFetchPositions] Converted SOL balance from lamports: ${currentBalanceY} -> ${balanceY} SOL`);
-          } else if (balanceY > 1e12) {
-            balanceY = balanceY / Math.pow(10, tokenYDecimals);
-          }
-          
-          // For token X, check if it's in raw format (very large numbers)
-          if (balanceX > 1e12) {
-            balanceX = balanceX / Math.pow(10, tokenXDecimals);
-          }
           
           // Fallback: Get balance from API if SDK not available
           if (balanceX === 0 && balanceY === 0 && position) {
             balanceX = Number(position?.token_x_amount || position?.x_amount || 0);
             balanceY = Number(position?.token_y_amount || position?.y_amount || 0);
-            // If from API and Y is SOL, might still be in lamports
-            if (isYSol && balanceY > 1) {
+            // API might return in raw format, so check and convert if needed
+            // For token X: if suspiciously large, convert from raw
+            const xRawThreshold = Math.pow(10, tokenXDecimals);
+            if (balanceX >= xRawThreshold) {
+              balanceX = balanceX / Math.pow(10, tokenXDecimals);
+            }
+            // For token Y (SOL or other): convert from raw if needed
+            if (isYSol) {
+              // SOL: if balance > 1, it's likely in lamports (raw format)
+              if (balanceY >= 1) {
               balanceY = balanceY / LAMPORTS_PER_SOL;
+              }
+            } else {
+              const yRawThreshold = Math.pow(10, tokenYDecimals);
+              if (balanceY >= yRawThreshold) {
+                balanceY = balanceY / Math.pow(10, tokenYDecimals);
+              }
             }
           }
 
@@ -1747,7 +1967,29 @@ const Portfolio = () => {
           let tokenYPriceUsd = 0;
           const solPrice = exchangeRates.SOL || DEFAULT_EXCHANGE_RATES.SOL;
           
-          if (pairInfo && solPrice > 0) {
+          // Priority 1: Use Jupiter API to get meme coin price (swap to SOL, then to USD)
+          // Only if token X is not SOL and we have mint address
+          const isXSol = pairInfo?.mint_x && SOL_MINTS.includes(pairInfo.mint_x);
+          if (!isXSol && pairInfo?.mint_x && solPrice > 0 && balanceX > 0) {
+            try {
+              // Get price by swapping 1 token X to SOL using Jupiter API
+              const tokenXDecimalsForPrice = pairInfo?.token_x?.decimals || tokenXDecimals;
+              
+              // Use Jupiter API to swap 1 token X to SOL
+              const solAmount = await convertMemeCoinToSol(pairInfo.mint_x, 1, tokenXDecimalsForPrice);
+              
+              if (solAmount > 0) {
+                // Convert SOL to USD
+                tokenXPriceUsd = solAmount * solPrice;
+                console.log(`[handleFetchPositions] Token X price via Jupiter: 1 token = ${solAmount} SOL = $${tokenXPriceUsd.toFixed(6)} USD`);
+              }
+            } catch (err) {
+              console.warn(`[handleFetchPositions] Failed to get token X price via Jupiter:`, err.message);
+            }
+          }
+          
+          // Priority 2: Use reserves if Jupiter API failed or not available
+          if (tokenXPriceUsd === 0 && pairInfo && solPrice > 0) {
             const reserveX = Number(pairInfo.reserve_x || pairInfo.token_x_reserve || pairInfo.x_reserve || pairInfo.reserveX || 0);
             const reserveY = Number(pairInfo.reserve_y || pairInfo.token_y_reserve || pairInfo.y_reserve || pairInfo.reserveY || 0);
             
@@ -1760,9 +2002,14 @@ const Portfolio = () => {
             }
           }
           
-          // Use tvlXPrice and tvlYPrice if available (from TVL calculation)
+          // Priority 3: Use tvlXPrice and tvlYPrice if available (from TVL calculation)
           if (tvlXPrice > 0) tokenXPriceUsd = tvlXPrice;
           if (tvlYPrice > 0) tokenYPriceUsd = tvlYPrice;
+          
+          // Set SOL price if Y is SOL
+          if (pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y)) {
+            tokenYPriceUsd = solPrice;
+          }
 
           // Extract token symbols from pairInfo with multiple fallbacks
           let tokenXSymbol = pairInfo?.token_x?.symbol || 
@@ -1976,6 +2223,9 @@ const Portfolio = () => {
             { defaultValue: null }
           );
 
+          // Get token decimals early (needed for sumSol)
+          const tokenXDecimals = pairInfo?.token_x?.decimals || 6;
+
           // Fetch wallet earning data for this wallet and pair
           let walletEarning = null;
           try {
@@ -1990,11 +2240,14 @@ const Portfolio = () => {
             console.warn(`[handleRefreshPositions] Failed to fetch wallet earning:`, err.message);
           }
 
-          // Calculate total deposits in USD
+          // Calculate total deposits in USD (for display purposes)
           const totalDepositUsd = sumUsd(deposits);
           
-          // Calculate total withdraws in USD  
+          // Calculate total withdraws in USD (for display purposes)
           const totalWithdrawUsd = sumUsd(withdraws);
+          
+          // Calculate net deposits in USD (for display purposes)
+          const netDepositUsd = totalDepositUsd - totalWithdrawUsd;
           
           // TVL = Current value of position (current balance)
           // Priority: Always use SDK positionData for realtime data from blockchain
@@ -2013,14 +2266,24 @@ const Portfolio = () => {
             const posData = sdkPosition.positionData;
             console.log(`[handleRefreshPositions] Using SDK positionData for TVL calculation (REALTIME)`);
             
-            const totalXAmount = posData.totalXAmount ? Number(posData.totalXAmount.toString ? posData.totalXAmount.toString() : posData.totalXAmount) : 0;
-            const totalYAmount = posData.totalYAmount ? Number(posData.totalYAmount.toString ? posData.totalYAmount.toString() : posData.totalYAmount) : 0;
+            // Get token decimals first (needed for conversion)
+            const tempTokenXDecimals = pairInfo?.token_x?.decimals || 6;
+            const tempTokenYDecimals = pairInfo?.token_y?.decimals || 9;
+            const tempIsYSol = pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y);
             
-            // Store current balance for display
-            currentBalanceX = totalXAmount;
-            currentBalanceY = totalYAmount;
+            const totalXAmountRaw = posData.totalXAmount ? Number(posData.totalXAmount.toString ? posData.totalXAmount.toString() : posData.totalXAmount) : 0;
+            const totalYAmountRaw = posData.totalYAmount ? Number(posData.totalYAmount.toString ? posData.totalYAmount.toString() : posData.totalYAmount) : 0;
             
-            console.log(`[handleRefreshPositions] SDK positionData amounts (REALTIME): totalXAmount=${totalXAmount}, totalYAmount=${totalYAmount}`);
+            // SDK returns amounts in raw format (with decimals), so convert to human-readable format
+            // Store current balance for display (already converted)
+            currentBalanceX = totalXAmountRaw / Math.pow(10, tempTokenXDecimals);
+            if (tempIsYSol) {
+              currentBalanceY = totalYAmountRaw / LAMPORTS_PER_SOL;
+            } else {
+              currentBalanceY = totalYAmountRaw / Math.pow(10, tempTokenYDecimals);
+            }
+            
+            console.log(`[handleRefreshPositions] SDK balance (raw -> converted): X: ${totalXAmountRaw} -> ${currentBalanceX}, Y: ${totalYAmountRaw} -> ${currentBalanceY}`);
             
             // Convert to USD using realtime prices from pair reserves
             let xPrice = 0;
@@ -2085,12 +2348,12 @@ const Portfolio = () => {
               }
             }
             
-            // Calculate TVL from realtime amounts and prices
-            if (totalXAmount > 0 && xPrice > 0) {
-              tokenXUsd = totalXAmount * xPrice;
+            // Calculate TVL from realtime amounts and prices (use converted balances)
+            if (currentBalanceX > 0 && xPrice > 0) {
+              tokenXUsd = currentBalanceX * xPrice;
             }
-            if (totalYAmount > 0 && yPrice > 0) {
-              tokenYUsd = totalYAmount * yPrice;
+            if (currentBalanceY > 0 && yPrice > 0) {
+              tokenYUsd = currentBalanceY * yPrice;
             }
             
             tvlUsd = tokenXUsd + tokenYUsd;
@@ -2577,22 +2840,81 @@ const Portfolio = () => {
           
           totalUnclaimedFeeUsd = unclaimedFeeXUsd + unclaimedFeeYUsd;
           
-          // Calculate UPNL: (Current TVL + Unclaimed Fees + Claimed Fees) - Net deposits
-          // UPNL includes all profit/loss from the position including fees earned
-          const netDepositUsd = totalDepositUsd - totalWithdrawUsd;
+          // Calculate UPNL in SOL first (base currency), then convert to other currencies
+          // Step 1: Convert all deposits and withdraws to SOL (including meme coin)
+          const solPriceForUpnl = exchangeRates.SOL || DEFAULT_EXCHANGE_RATES.SOL;
           
-          console.log(`[handleRefreshPositions] ========== UPNL Calculation (WITH FEES) ==========`);
-          console.log(`[handleRefreshPositions] - TVL (LIQUIDITY): $${tvlUsd}`);
-          console.log(`[handleRefreshPositions] - Unclaimed Fees (SOL + Meme coin): $${totalUnclaimedFeeUsd} USD`);
-          console.log(`[handleRefreshPositions]   * Meme coin fees: $${unclaimedFeeXUsd} USD`);
-          console.log(`[handleRefreshPositions]   * SOL fees: $${unclaimedFeeYUsd} USD`);
-          console.log(`[handleRefreshPositions] - Claimed Fees (SOL + Meme coin): $${totalClaimedFeeUsd} USD`);
-          console.log(`[handleRefreshPositions] - Total Value (TVL + All Fees): $${tvlUsd + totalUnclaimedFeeUsd + totalClaimedFeeUsd}`);
-          console.log(`[handleRefreshPositions] - Net Deposits (deposits - withdraws): $${netDepositUsd}`);
+          // Convert deposits to SOL (each deposit has token_x and token_y, convert both to SOL)
+          console.log(`[handleRefreshPositions] Converting ${deposits.length} deposits to SOL...`);
+          const totalDepositSol = await sumSol(deposits, pairInfo, tokenXDecimals);
+          console.log(`[handleRefreshPositions] Total Deposits: ${totalDepositSol.toFixed(6)} SOL ($${totalDepositUsd.toFixed(2)})`);
           
-          const upnl = calculateUPNL(tvlUsd, netDepositUsd, exchangeRates.SOL, totalUnclaimedFeeUsd, totalClaimedFeeUsd);
+          // Convert withdraws to SOL (each withdraw has token_x and token_y, convert both to SOL)
+          console.log(`[handleRefreshPositions] Converting ${withdraws.length} withdraws to SOL...`);
+          const totalWithdrawSol = await sumSol(withdraws, pairInfo, tokenXDecimals);
+          console.log(`[handleRefreshPositions] Total Withdraws: ${totalWithdrawSol.toFixed(6)} SOL ($${totalWithdrawUsd.toFixed(2)})`);
           
-          console.log(`[handleRefreshPositions] - UPNL (Total Value - Net Deposits, WITH FEES): $${upnl.usd} (${upnl.percent.toFixed(2)}%)`);
+          // Net deposits = Total deposits - Total withdraws (all in SOL)
+          const netDepositSol = totalDepositSol - totalWithdrawSol;
+          const netDepositUsdForLog = totalDepositUsd - totalWithdrawUsd;
+          console.log(`[handleRefreshPositions] Net Deposits: ${netDepositSol.toFixed(6)} SOL ($${netDepositUsdForLog.toFixed(2)})`);
+          
+          // Convert current balance to SOL
+          // Use currentBalanceX and currentBalanceY (already converted from raw format)
+          // Convert balanceX (meme coin) to SOL using Jupiter API or reserves
+          let balanceXSol = 0;
+          if (currentBalanceX > 0 && pairInfo?.mint_x) {
+            const isXSol = pairInfo.mint_x && SOL_MINTS.includes(pairInfo.mint_x);
+            if (isXSol) {
+              balanceXSol = currentBalanceX;
+            } else {
+              // Convert meme coin to SOL using Jupiter API
+              try {
+                const tokenXDecimalsForConversion = pairInfo?.token_x?.decimals || 6;
+                balanceXSol = await convertMemeCoinToSol(pairInfo.mint_x, currentBalanceX, tokenXDecimalsForConversion);
+              } catch (err) {
+                // Fallback: use reserves if Jupiter fails
+                if (pairInfo.mint_y && SOL_MINTS.includes(pairInfo.mint_y)) {
+                  const reserveX = Number(pairInfo.reserve_x || pairInfo.token_x_reserve || pairInfo.x_reserve || pairInfo.reserveX || 0);
+                  const reserveY = Number(pairInfo.reserve_y || pairInfo.token_y_reserve || pairInfo.y_reserve || pairInfo.reserveY || 0);
+                  if (reserveX > 0 && reserveY > 0) {
+                    const reserveYInSol = reserveY > 1e9 ? reserveY / LAMPORTS_PER_SOL : reserveY;
+                    balanceXSol = (currentBalanceX * reserveYInSol) / reserveX;
+                  }
+                }
+              }
+            }
+          }
+          
+          // Convert balanceY to SOL
+          let balanceYSol = 0;
+          const tempIsYSol = pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y);
+          if (currentBalanceY > 0) {
+            if (tempIsYSol) {
+              balanceYSol = currentBalanceY; // Already in SOL
+            } else {
+              // If Y is not SOL, convert to SOL (shouldn't happen in most cases, but handle it)
+              balanceYSol = 0; // For now, assume 0 if Y is not SOL
+            }
+          }
+          
+          // Current TVL in SOL = balanceX in SOL + balanceY in SOL
+          const tvlSol = balanceXSol + balanceYSol;
+          
+          // Convert fees to SOL
+          const unclaimedFeesSol = solPriceForUpnl > 0 ? totalUnclaimedFeeUsd / solPriceForUpnl : 0;
+          const claimedFeesSol = solPriceForUpnl > 0 ? totalClaimedFeeUsd / solPriceForUpnl : 0;
+          
+          // Calculate UPNL in SOL
+          const upnl = calculateUPNL(tvlSol, netDepositSol, solPriceForUpnl, unclaimedFeesSol, claimedFeesSol);
+          
+          console.log(`[handleRefreshPositions] ========== UPNL Calculation (IN SOL) ==========`);
+          console.log(`[handleRefreshPositions] - TVL (LIQUIDITY): ${tvlSol.toFixed(6)} SOL ($${tvlUsd.toFixed(2)})`);
+          console.log(`[handleRefreshPositions] - Unclaimed Fees: ${unclaimedFeesSol.toFixed(6)} SOL ($${totalUnclaimedFeeUsd.toFixed(2)})`);
+          console.log(`[handleRefreshPositions] - Claimed Fees: ${claimedFeesSol.toFixed(6)} SOL ($${totalClaimedFeeUsd.toFixed(2)})`);
+          console.log(`[handleRefreshPositions] - Total Value: ${(tvlSol + unclaimedFeesSol + claimedFeesSol).toFixed(6)} SOL`);
+          console.log(`[handleRefreshPositions] - Net Deposits: ${netDepositSol.toFixed(6)} SOL ($${netDepositUsd.toFixed(2)})`);
+          console.log(`[handleRefreshPositions] - UPNL: ${upnl.sol.toFixed(6)} SOL ($${upnl.usd.toFixed(2)}) (${upnl.percent.toFixed(2)}%)`);
           console.log(`[handleRefreshPositions] ==========================================`);
 
           // Final validation: Skip position if TVL is 0 or very small
@@ -2602,39 +2924,39 @@ const Portfolio = () => {
             return null;
           }
 
-          // Get token decimals for proper display
-          let tokenXDecimals = pairInfo?.token_x?.decimals || 6;
+          // Get token decimals for proper display (tokenXDecimals already defined earlier)
           let tokenYDecimals = pairInfo?.token_y?.decimals || 9;
           const isYSol = pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y);
           if (isYSol) {
             tokenYDecimals = 9; // SOL has 9 decimals
           }
 
-          // Format balance amounts (convert from raw if needed)
+          // Format balance amounts
+          // Note: currentBalanceX and currentBalanceY are already converted from raw format if from SDK
           let balanceX = currentBalanceX;
           let balanceY = currentBalanceY;
-          
-          // Check if balances are in raw format and convert
-          // For SOL (9 decimals), if balance > 1, it's likely in lamports (raw format)
-          if (isYSol && balanceY > 1) {
-            balanceY = balanceY / LAMPORTS_PER_SOL;
-            console.log(`[handleRefreshPositions] Converted SOL balance from lamports: ${currentBalanceY} -> ${balanceY} SOL`);
-          } else if (balanceY > 1e12) {
-            balanceY = balanceY / Math.pow(10, tokenYDecimals);
-          }
-          
-          // For token X, check if it's in raw format (very large numbers)
-          if (balanceX > 1e12) {
-            balanceX = balanceX / Math.pow(10, tokenXDecimals);
-          }
           
           // Fallback: Get balance from API if SDK not available
           if (balanceX === 0 && balanceY === 0 && position) {
             balanceX = Number(position?.token_x_amount || position?.x_amount || 0);
             balanceY = Number(position?.token_y_amount || position?.y_amount || 0);
-            // If from API and Y is SOL, might still be in lamports
-            if (isYSol && balanceY > 1) {
+            // API might return in raw format, so check and convert if needed
+            // For token X: if suspiciously large, convert from raw
+            const xRawThreshold = Math.pow(10, tokenXDecimals);
+            if (balanceX >= xRawThreshold) {
+              balanceX = balanceX / Math.pow(10, tokenXDecimals);
+            }
+            // For token Y (SOL or other): convert from raw if needed
+            if (isYSol) {
+              // SOL: if balance > 1, it's likely in lamports (raw format)
+              if (balanceY >= 1) {
               balanceY = balanceY / LAMPORTS_PER_SOL;
+              }
+            } else {
+              const yRawThreshold = Math.pow(10, tokenYDecimals);
+              if (balanceY >= yRawThreshold) {
+                balanceY = balanceY / Math.pow(10, tokenYDecimals);
+              }
             }
           }
 
@@ -2643,7 +2965,29 @@ const Portfolio = () => {
           let tokenYPriceUsd = 0;
           const solPrice = exchangeRates.SOL || DEFAULT_EXCHANGE_RATES.SOL;
           
-          if (pairInfo && solPrice > 0) {
+          // Priority 1: Use Jupiter API to get meme coin price (swap to SOL, then to USD)
+          // Only if token X is not SOL and we have mint address
+          const isXSol = pairInfo?.mint_x && SOL_MINTS.includes(pairInfo.mint_x);
+          if (!isXSol && pairInfo?.mint_x && solPrice > 0 && balanceX > 0) {
+            try {
+              // Get price by swapping 1 token X to SOL using Jupiter API
+              const tokenXDecimalsForPrice = pairInfo?.token_x?.decimals || tokenXDecimals;
+              
+              // Use Jupiter API to swap 1 token X to SOL
+              const solAmount = await convertMemeCoinToSol(pairInfo.mint_x, 1, tokenXDecimalsForPrice);
+              
+              if (solAmount > 0) {
+                // Convert SOL to USD
+                tokenXPriceUsd = solAmount * solPrice;
+                console.log(`[handleFetchPositions] Token X price via Jupiter: 1 token = ${solAmount} SOL = $${tokenXPriceUsd.toFixed(6)} USD`);
+              }
+            } catch (err) {
+              console.warn(`[handleFetchPositions] Failed to get token X price via Jupiter:`, err.message);
+            }
+          }
+          
+          // Priority 2: Use reserves if Jupiter API failed or not available
+          if (tokenXPriceUsd === 0 && pairInfo && solPrice > 0) {
             const reserveX = Number(pairInfo.reserve_x || pairInfo.token_x_reserve || pairInfo.x_reserve || pairInfo.reserveX || 0);
             const reserveY = Number(pairInfo.reserve_y || pairInfo.token_y_reserve || pairInfo.y_reserve || pairInfo.reserveY || 0);
             
@@ -2656,9 +3000,14 @@ const Portfolio = () => {
             }
           }
           
-          // Use tvlXPrice and tvlYPrice if available (from TVL calculation)
+          // Priority 3: Use tvlXPrice and tvlYPrice if available (from TVL calculation)
           if (tvlXPrice > 0) tokenXPriceUsd = tvlXPrice;
           if (tvlYPrice > 0) tokenYPriceUsd = tvlYPrice;
+          
+          // Set SOL price if Y is SOL
+          if (pairInfo?.mint_y && SOL_MINTS.includes(pairInfo.mint_y)) {
+            tokenYPriceUsd = solPrice;
+          }
 
           // Extract token symbols from pairInfo with multiple fallbacks
           let tokenXSymbol = pairInfo?.token_x?.symbol || 
@@ -2988,9 +3337,18 @@ const Portfolio = () => {
                         : pos.unclaimedFeeUsd;
                       const upnlValue = currency === 'SOL' ? pos.upnl.sol : pos.upnl.usd;
 
-                      // Calculate USD value for balances using stored prices
+                      // Calculate value for balances using stored prices (always in USD first)
                       const balanceXUsd = (pos.balanceX || 0) * (pos.tokenXPriceUsd || 0);
                       const balanceYUsd = (pos.balanceY || 0) * (pos.tokenYPriceUsd || 0);
+                      
+                      // Convert to selected currency (formatCurrency will handle IDR conversion)
+                      const balanceXValue = currency === 'SOL'
+                        ? balanceXUsd / (exchangeRates.SOL || DEFAULT_EXCHANGE_RATES.SOL)
+                        : balanceXUsd; // Keep in USD, formatCurrency will convert to IDR if needed
+                      
+                      const balanceYValue = currency === 'SOL'
+                        ? balanceYUsd / (exchangeRates.SOL || DEFAULT_EXCHANGE_RATES.SOL)
+                        : balanceYUsd; // Keep in USD, formatCurrency will convert to IDR if needed
                       
                       // Get token symbols with multiple fallbacks
                       const tokenXSymbol = pos.tokenXSymbol || 
@@ -3024,12 +3382,12 @@ const Portfolio = () => {
                           <td className="text-right px-2 whitespace-nowrap text-white">
                             <div className="text-xs">
                               <div>
-                                {(pos.balanceX || 0).toLocaleString('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 0 })} {tokenXSymbol}
-                                {balanceXUsd > 0.01 && ` ($${balanceXUsd.toFixed(2)})`}
+                                {formatTokenAmount(pos.balanceX || 0, 2)} {tokenXSymbol}
+                                {balanceXValue > 0 && ` (${formatCurrency(balanceXValue, { currency, exchangeRates })})`}
                               </div>
                               <div className="text-gray-500">
-                                {(pos.balanceY || 0).toLocaleString('en-US', { maximumFractionDigits: 6, minimumFractionDigits: 0 })} {tokenYSymbol}
-                                {balanceYUsd > 0.01 && ` ($${balanceYUsd.toFixed(2)})`}
+                                {formatTokenAmount(pos.balanceY || 0, 2)} {tokenYSymbol}
+                                {balanceYValue > 0 && ` (${formatCurrency(balanceYValue, { currency, exchangeRates })})`}
                               </div>
                             </div>
                           </td>
